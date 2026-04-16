@@ -1,0 +1,59 @@
+# Dependabot — GitHub Actions 버전 자동 갱신
+#
+# 목적: quality-gate.yml의 SHA pinning을 방치(나태화)하지 않고 주간 자동 PR 발행
+#
+# 배치 위치: .github/dependabot.yml (프로젝트 루트에서 .github/ 디렉토리로 복사)
+#
+# 참고: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # GitHub Actions 생태계 — quality-gate.yml의 pinning된 SHA 자동 갱신
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # npm 생태계 — 런타임·dev 의존성 (프로젝트가 Node.js일 때만 의미)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "npm"
+    # 메이저 버전은 수동 검토 필요 — patch/minor만 자동
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # pip 생태계 — Python 프로젝트에서만 활성화
+  # 사용하지 않으면 이 블록 제거
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "python"

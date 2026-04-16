@@ -1,0 +1,216 @@
+name: Quality Gate
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+# 보안 하드닝: 기본 권한 제거. 각 job이 필요한 최소 권한만 명시.
+# pull_request_target 사용 금지 — 포크 PR이 secret에 접근하는 공격 벡터.
+permissions: {}
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+# 액션 버전 전략:
+#   - GitHub 공식(actions/*): @v4 유지 (major tag는 안정적)
+#   - 서드파티: commit SHA로 pinning (공급망 공격 방지)
+#   - 주기적 업데이트: `.github/dependabot.yml`이 github-actions 생태계를 주간 갱신
+#   - SHA 확인일: 2026-04-16
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  # 1. 시크릿 스캔 (FAIL-FAST — 다른 job 전에 실행)
+  # ─────────────────────────────────────────────────────────
+  secret-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 전체 히스토리 스캔
+      # TruffleHog v3.94.3 — verified secrets + 검증 실패분만 리포트
+      # gitleaks 대비 장점: 조직 라이선스 불필요, FP 낮음(실제 유효 시크릿 검증)
+      - name: TruffleHog OSS
+        uses: trufflesecurity/trufflehog@47e7b7cd74f578e1e3145d48f669f22fd1330ca6  # v3.94.3
+        with:
+          extra_args: --results=verified,unknown --fail
+
+  # ─────────────────────────────────────────────────────────
+  # 2. 감지 — 언어별 lint job 활성화 결정
+  # ─────────────────────────────────────────────────────────
+  detect:
+    needs: secret-scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      has-ts: ${{ steps.detect.outputs.has-ts }}
+      has-py: ${{ steps.detect.outputs.has-py }}
+      has-npm: ${{ steps.detect.outputs.has-npm }}
+      has-pip: ${{ steps.detect.outputs.has-pip }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: detect
+        run: |
+          echo "has-ts=$([ -f eslint.config.mjs ] || [ -f eslint.config.js ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "has-py=$([ -f ruff.toml ] || grep -q '^\[tool.ruff' pyproject.toml 2>/dev/null && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "has-npm=$([ -f package-lock.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "has-pip=$([ -f requirements.txt ] || [ -f pyproject.toml ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────────────────
+  # 3. 구조·타입 린트
+  # ─────────────────────────────────────────────────────────
+  lint-ts:
+    needs: detect
+    if: needs.detect.outputs.has-ts == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --prefer-offline --no-audit
+
+      - name: Diff-based lint on PR (신규 파일만 strict)
+        if: github.event_name == 'pull_request'
+        run: |
+          FILES=$(git diff --name-only --diff-filter=AM origin/${{ github.base_ref }}...HEAD | grep -E '\.(ts|tsx|js|jsx|mjs|cjs)$' || true)
+          if [ -n "$FILES" ]; then
+            echo "Linting changed files: $FILES"
+            npx eslint $FILES --max-warnings 0 --format json --output-file eslint-report.json || {
+              npx eslint $FILES --max-warnings 0
+              exit 1
+            }
+          fi
+
+      - name: Full lint (push to main/master)
+        if: github.event_name == 'push'
+        run: |
+          npx eslint . --format json --output-file eslint-report.json || {
+            npx eslint .
+            exit 1
+          }
+
+      - name: TypeScript check
+        run: npx tsc --noEmit --pretty false
+
+      - name: Upload ESLint report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eslint-report
+          path: eslint-report.json
+          retention-days: 14
+
+  lint-python:
+    needs: detect
+    if: needs.detect.outputs.has-py == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      # SHA pinning: v3.6.1 (2026-04 확인). 업데이트 시 SHA와 tag 동시 갱신 필수.
+      - uses: astral-sh/ruff-action@4919ec5cf1f49eff0871dbcea0da843445b837e6  # v3.6.1
+        with:
+          args: 'check --output-format=github'
+
+  # ─────────────────────────────────────────────────────────
+  # 4. 공급망 보안 — 의존성 취약점
+  # ─────────────────────────────────────────────────────────
+  supply-chain-npm:
+    needs: detect
+    if: needs.detect.outputs.has-npm == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      # --audit-level=high: high/critical만 차단 (moderate 이하는 통과)
+      # dev 포함: CI/빌드 툴체인 취약점도 잡아야 함 (Codex 리뷰 피드백)
+      - name: npm audit
+        run: npm audit --audit-level=high
+
+  supply-chain-pip:
+    needs: detect
+    if: needs.detect.outputs.has-pip == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      # pip-audit v2.10.0 via pypa/gh-action-pip-audit v1.1.0
+      # 스코프: requirements.txt / pyproject.toml / pylock.*.toml
+      # poetry.lock / uv.lock / Pipfile.lock은 osv-scanner-lockfile job이 커버
+      - uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266  # v1.1.0
+
+  # 모든 lockfile 형식(poetry/uv/pnpm/yarn/go/cargo 등 11+)을 커버
+  # pip-audit/npm audit이 놓치는 형식 보완. OSV.dev DB 기반.
+  supply-chain-lockfile-pr:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@c51854704019a247608d928f370c98740469d4b5  # v2.3.5
+
+  supply-chain-lockfile-full:
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@c51854704019a247608d928f370c98740469d4b5  # v2.3.5
+
+  # ─────────────────────────────────────────────────────────
+  # 5. 커밋 메시지 린트 (Conventional Commits, PR 전용)
+  # ─────────────────────────────────────────────────────────
+  # 초기 2주: failOnWarnings=false (경고만). 이후 true로 전환.
+  # 전환 검토일: 2026-04-30
+  commit-lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@b948419dd99f3fd78a6548d48f94e3df7f6bf3ed  # v6.2.1
+        with:
+          failOnWarnings: false
+
+  # ─────────────────────────────────────────────────────────
+  # 6. 중복 코드 검사
+  # ─────────────────────────────────────────────────────────
+  duplicate-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    # 차단 전환: 신규 중복 코드 금지. 레거시는 .jscpd.json 화이트리스트로 관리.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run jscpd on changed files
+        run: |
+          FILES=$(git diff --name-only --diff-filter=AM origin/${{ github.base_ref }}...HEAD | grep -E '\.(ts|tsx|js|jsx|py)$' || true)
+          if [ -n "$FILES" ]; then
+            npx -y jscpd --min-lines 5 --min-tokens 50 --threshold 5 --format 'typescript,javascript,python' $FILES
+          fi
