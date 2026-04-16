@@ -11,31 +11,24 @@
 // 참고: https://commitlint.js.org/reference/configuration.html
 
 // Korean-aware subject-case 규칙
-// - subject에 한글이 전체의 30% 이상이면 한국어 주체로 간주 → case 검증 통과
-// - 1글자 한글만 섞어 bypass 방지 (예: `fix: ㄱ temp` → 거부)
-// - 이모지만 있는 subject도 통과 (한글 0%여도 영문자 없으면 bypass 허용 불가 → 영문 대문자만 거부)
-// - 영어 전용이면 lower-case 강제 (Conventional Commits 원칙)
+// - 한글 2글자 이상 포함 시 한국어 주체로 간주 → case 검증 통과
+//   (현실 반영: 한국어 기술 commit은 영어 용어 다수 포함해도 자연스러움)
+// - 1글자 한글 bypass 방어 (예: `ㄱ AddThing` → 차단)
+// - 한글 없음/1글자인데 영어 포함 → 첫 알파벳 lower-case 강제
+// - 이모지/숫자만 있는 subject → 통과 (검증할 대상 없음)
 const koreanAwareSubjectCase = (parsed) => {
   const subject = parsed.subject || '';
   if (!subject) return [true];
 
-  // 한글 문자 수 / 알파벳+한글 문자 수 비율로 판단
   const hangulCount = (subject.match(/\p{Script=Hangul}/gu) || []).length;
-  const alphaCount = (subject.match(/[A-Za-z]/g) || []).length;
-  const meaningfulCount = hangulCount + alphaCount;
 
-  // 의미 있는 문자 없음 (이모지/숫자만) → pass
-  if (meaningfulCount === 0) return [true];
+  // 한글 2글자 이상 → 한국어 주체 판정, case 생략
+  if (hangulCount >= 2) return [true];
 
-  const hangulRatio = hangulCount / meaningfulCount;
-
-  // 한글 비율 30%+ → 한국어 subject로 판정, case 검증 생략
-  if (hangulRatio >= 0.3) return [true];
-
-  // 그 외 = 영어 주체 → 첫 알파벳 lower-case 강제
+  // 영어 지배적 → 첫 알파벳 lower-case 강제
   const firstAlpha = subject.match(/[A-Za-z]/);
   if (firstAlpha && firstAlpha[0] !== firstAlpha[0].toLowerCase()) {
-    return [false, 'subject must be lower-case (English-dominant subjects: Hangul ratio < 30%)'];
+    return [false, 'subject must be lower-case (require 2+ Hangul chars for Korean-mode bypass)'];
   }
   return [true];
 };
