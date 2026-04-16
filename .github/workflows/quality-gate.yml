@@ -98,8 +98,9 @@ jobs:
           mapfile -t FILES < <(git diff --name-only --diff-filter=AM "origin/${{ github.base_ref }}...HEAD" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs)$' || true)
           if [ "${#FILES[@]}" -gt 0 ]; then
             echo "Linting changed files: ${FILES[*]}"
-            npx eslint "${FILES[@]}" --max-warnings 0 --format json --output-file eslint-report.json || {
-              npx eslint "${FILES[@]}" --max-warnings 0
+            # --no-warn-ignored: CLI에 명시된 파일이 ignores 패턴에 걸려도 warn 안 함
+            npx eslint "${FILES[@]}" --max-warnings 0 --no-warn-ignored --format json --output-file eslint-report.json || {
+              npx eslint "${FILES[@]}" --max-warnings 0 --no-warn-ignored
               exit 1
             }
           fi
