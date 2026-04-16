@@ -47,12 +47,14 @@ pre-commit:
 
     secret-scan-staged:
       # TruffleHog CLI는 별도 설치 필요: brew install trufflehog
+      # staged files만 정확히 스캔 — 디렉토리 스캔이 아닌 filesystem 소스로 파일 리스트 전달
+      # 참고: TruffleHog v3 `filesystem` subcommand는 파일 경로를 직접 받음
       # 설치 안 돼 있으면 스킵 (로컬 1차 가드일 뿐, CI가 최종 차단)
       run: |
         if command -v trufflehog >/dev/null 2>&1; then
-          trufflehog git file://. --since-commit HEAD --results=verified --fail
+          trufflehog filesystem {staged_files} --results=verified --fail --no-update 2>/dev/null
         else
-          echo "ℹ️ trufflehog 미설치 — 로컬 시크릿 스캔 스킵 (CI가 차단)"
+          echo "ℹ️ trufflehog 미설치 — 로컬 시크릿 스캔 스킵 (CI가 차단). 설치: brew install trufflehog"
         fi
       skip:
         - merge

@@ -35,11 +35,15 @@ jobs:
       # TruffleHog v3.94.3 — verified secrets만 리포트 (strictest, lowest FP)
       # gitleaks 대비 장점: 조직 라이선스 불필요, FP 낮음(실제 유효 시크릿 검증)
       # action.yml 내부가 자동으로 --fail 추가 (source 확인: trufflesecurity/trufflehog@v3.94.3)
-      # unknown 제거: 네트워크 검증 실패 결과까지 포함하면 vendor/node_modules에서 대량 FP
+      # --exclude-globs: vendor/빌드 산출물 제외 (git history에 실수로 커밋된 경우 방어)
+      # 트레이드오프: verified만은 API 검증된 실제 유효 키만 차단. 엄격 모드는
+      #   `--results=verified,unknown`으로 전환 (FP 증가, 망검증 실패 포함)
       - name: TruffleHog OSS
         uses: trufflesecurity/trufflehog@47e7b7cd74f578e1e3145d48f669f22fd1330ca6  # v3.94.3
         with:
-          extra_args: --results=verified --exclude-paths=.trufflehog-ignore
+          extra_args: >-
+            --results=verified
+            --exclude-globs=node_modules/**,dist/**,.next/**,vendor/**,build/**,.venv/**,venv/**,coverage/**,*.lock,*.lockb,package-lock.json,yarn.lock,pnpm-lock.yaml,poetry.lock,uv.lock,Cargo.lock,go.sum
 
   # ─────────────────────────────────────────────────────────
   # 2. 감지 — 언어별 lint job 활성화 결정
@@ -239,11 +243,17 @@ jobs:
           cache: 'npm'
       - run: npm ci --prefer-offline --no-audit
       # knip 설정 없으면 스킵 (워크플로 실패 방지)
+      # npx 캐시 재현성 문제 피하려면 package.json devDep에 knip 고정 권장
       - name: knip
         run: |
           if [ -f knip.json ] || [ -f knip.jsonc ] || [ -f knip.config.ts ] || [ -f knip.config.js ]; then
-            npx -y knip@6.4.1 --no-exit-code --reporter compact
-            # 차단 전환은 baseline 측정 후: npx knip@6.4.1
+            # devDep로 설치돼 있으면 그 버전 사용, 없으면 npx로 6.4.1 fallback
+            if [ -f node_modules/.bin/knip ]; then
+              ./node_modules/.bin/knip --no-exit-code --reporter compact
+            else
+              npx -y knip@6.4.1 --no-exit-code --reporter compact
+            fi
+            # 차단 전환은 baseline 측정 후: --no-exit-code 제거
           else
             echo "ℹ️ knip 설정 없음 — dead-code job 스킵. knip.json 추가 후 활성화"
           fi
