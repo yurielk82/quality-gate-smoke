@@ -1,0 +1,75 @@
+# Lefthook — 로컬 Git 훅 (pre-commit, commit-msg, pre-push)
+#
+# 목적: CI 이전 로컬에서 1차 차단. CI만 있으면 터미널 커밋이 무방비.
+#
+# 설치 (Node.js 프로젝트):
+#   npm i -D lefthook
+#   npx lefthook install
+#
+# 설치 (Homebrew):
+#   brew install lefthook
+#   lefthook install
+#
+# 참고: https://github.com/evilmartians/lefthook/blob/master/docs/configuration.md
+
+pre-commit:
+  parallel: true
+  commands:
+    lint:
+      glob: '*.{ts,tsx,js,jsx,mjs,cjs}'
+      run: npx eslint --max-warnings 0 {staged_files}
+      skip:
+        - merge
+        - rebase
+
+    typecheck:
+      glob: '*.{ts,tsx}'
+      # 프로젝트 전체 tsc — 증분 불가 (tsc는 파일 단위 검사 불가)
+      # tsc 느리면 이 블록 제거하고 CI만 의존
+      run: npx tsc --noEmit --pretty false
+      skip:
+        - merge
+        - rebase
+
+    format:
+      glob: '*.{ts,tsx,js,jsx,json,md,css,scss}'
+      run: npx prettier --check {staged_files}
+      skip:
+        - merge
+        - rebase
+
+    ruff-check:
+      glob: '*.py'
+      run: ruff check {staged_files}
+      skip:
+        - merge
+        - rebase
+
+    secret-scan-staged:
+      # TruffleHog CLI는 별도 설치 필요: brew install trufflehog
+      # staged files만 정확히 스캔 — 디렉토리 스캔이 아닌 filesystem 소스로 파일 리스트 전달
+      # 참고: TruffleHog v3 `filesystem` subcommand는 파일 경로를 직접 받음
+      # 설치 안 돼 있으면 스킵 (로컬 1차 가드일 뿐, CI가 최종 차단)
+      run: |
+        if command -v trufflehog >/dev/null 2>&1; then
+          trufflehog filesystem {staged_files} --results=verified --fail --no-update 2>/dev/null
+        else
+          echo "ℹ️ trufflehog 미설치 — 로컬 시크릿 스캔 스킵 (CI가 차단). 설치: brew install trufflehog"
+        fi
+      skip:
+        - merge
+        - rebase
+
+commit-msg:
+  commands:
+    commitlint:
+      run: npx commitlint --edit {1}
+
+pre-push:
+  commands:
+    full-lint:
+      # push 전에 전체 lint 한 번 더 — CI 왕복 비용 절약
+      run: npx eslint . --max-warnings 0
+      skip:
+        - merge
+        - rebase

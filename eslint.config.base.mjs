@@ -89,7 +89,8 @@ export default tseslint.config(
     },
   },
   {
-    // 생성물 무시
+    // 생성물 + ESLint config 파일 자체 무시
+    // (config에 임계값 literal이 들어가므로 no-magic-numbers 재귀 적용 회피)
     ignores: [
       '**/node_modules/**',
       '**/dist/**',
@@ -100,6 +101,8 @@ export default tseslint.config(
       '**/*.generated.{ts,tsx,js,jsx}',
       '**/*.pb.{ts,js}',
       '**/migrations/**',
+      'eslint.config.{mjs,js,cjs,ts}',
+      'eslint.config.*.{mjs,js,cjs,ts}',
     ],
   },
 );

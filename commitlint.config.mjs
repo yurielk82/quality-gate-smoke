@@ -10,8 +10,39 @@
 //
 // 참고: https://commitlint.js.org/reference/configuration.html
 
+// Korean-aware subject-case 규칙
+// - 한글 2글자 이상 포함 시 한국어 주체로 간주 → case 검증 통과
+//   (현실 반영: 한국어 기술 commit은 영어 용어 다수 포함해도 자연스러움)
+// - 1글자 한글 bypass 방어 (예: `ㄱ AddThing` → 차단)
+// - 한글 없음/1글자인데 영어 포함 → 첫 알파벳 lower-case 강제
+// - 이모지/숫자만 있는 subject → 통과 (검증할 대상 없음)
+const koreanAwareSubjectCase = (parsed) => {
+  const subject = parsed.subject || '';
+  if (!subject) return [true];
+
+  const hangulCount = (subject.match(/\p{Script=Hangul}/gu) || []).length;
+
+  // 한글 2글자 이상 → 한국어 주체 판정, case 생략
+  if (hangulCount >= 2) return [true];
+
+  // 영어 지배적 → 첫 알파벳 lower-case 강제
+  const firstAlpha = subject.match(/[A-Za-z]/);
+  if (firstAlpha && firstAlpha[0] !== firstAlpha[0].toLowerCase()) {
+    return [false, 'subject must be lower-case (require 2+ Hangul chars for Korean-mode bypass)'];
+  }
+  return [true];
+};
+
 export default {
   extends: ['@commitlint/config-conventional'],
+
+  plugins: [
+    {
+      rules: {
+        'subject-case-korean-aware': koreanAwareSubjectCase,
+      },
+    },
+  ],
 
   rules: {
     // 허용되는 타입 (Conventional Commits + 워크스페이스 관습)
@@ -21,10 +52,11 @@ export default {
       ['feat', 'fix', 'refactor', 'docs', 'test', 'chore', 'perf', 'ci', 'build', 'style', 'revert'],
     ],
 
-    // subject가 한국어/영문 혼용이므로 case 강제 해제
-    // 영어 전용 프로젝트는 다음 규칙으로 교체:
-    //   'subject-case': [2, 'always', 'lower-case']
+    // 기본 subject-case는 해제 (Korean-aware plugin이 대체)
     'subject-case': [0],
+
+    // 한국어/영어 혼용 subject를 올바르게 검증
+    'subject-case-korean-aware': [2, 'always'],
 
     // 헤더(type(scope): subject) 최대 길이
     'header-max-length': [2, 'always', 100],
