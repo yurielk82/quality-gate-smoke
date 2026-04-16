@@ -34,10 +34,11 @@ jobs:
           fetch-depth: 0  # 전체 히스토리 스캔
       # TruffleHog v3.94.3 — verified secrets + 검증 실패분만 리포트
       # gitleaks 대비 장점: 조직 라이선스 불필요, FP 낮음(실제 유효 시크릿 검증)
+      # action.yml 내부가 자동으로 --fail 추가 (source 확인: trufflesecurity/trufflehog@v3.94.3)
       - name: TruffleHog OSS
         uses: trufflesecurity/trufflehog@47e7b7cd74f578e1e3145d48f669f22fd1330ca6  # v3.94.3
         with:
-          extra_args: --results=verified,unknown --fail
+          extra_args: --results=verified,unknown
 
   # ─────────────────────────────────────────────────────────
   # 2. 감지 — 언어별 lint job 활성화 결정
@@ -51,6 +52,7 @@ jobs:
       has-ts: ${{ steps.detect.outputs.has-ts }}
       has-py: ${{ steps.detect.outputs.has-py }}
       has-npm: ${{ steps.detect.outputs.has-npm }}
+      has-node: ${{ steps.detect.outputs.has-node }}
       has-pip: ${{ steps.detect.outputs.has-pip }}
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +60,10 @@ jobs:
         run: |
           echo "has-ts=$([ -f eslint.config.mjs ] || [ -f eslint.config.js ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "has-py=$([ -f ruff.toml ] || grep -q '^\[tool.ruff' pyproject.toml 2>/dev/null && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          # has-npm: package-lock.json 전용 (npm audit 대상). yarn/pnpm lockfile은 osv-scanner가 커버
           echo "has-npm=$([ -f package-lock.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          # has-node: package.json 존재 여부 — jsx-a11y/knip 등 Node 생태계 job 전반
+          echo "has-node=$([ -f package.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "has-pip=$([ -f requirements.txt ] || [ -f pyproject.toml ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────────
@@ -159,9 +164,12 @@ jobs:
 
   # 모든 lockfile 형식(poetry/uv/pnpm/yarn/go/cargo 등 11+)을 커버
   # pip-audit/npm audit이 놓치는 형식 보완. OSV.dev DB 기반.
+  # osv-scanner reusable workflow 요구 권한: actions:read + contents:read + security-events:write
+  # (workflow source 확인: google/osv-scanner-action@v2.3.5 .github/workflows/osv-scanner-reusable*.yml)
   supply-chain-lockfile-pr:
     if: github.event_name == 'pull_request'
     permissions:
+      actions: read
       contents: read
       security-events: write
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@c51854704019a247608d928f370c98740469d4b5  # v2.3.5
@@ -169,6 +177,7 @@ jobs:
   supply-chain-lockfile-full:
     if: github.event_name == 'push'
     permissions:
+      actions: read
       contents: read
       security-events: write
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@c51854704019a247608d928f370c98740469d4b5  # v2.3.5
@@ -193,7 +202,51 @@ jobs:
           failOnWarnings: false
 
   # ─────────────────────────────────────────────────────────
-  # 6. 중복 코드 검사
+  # 6. GitHub Actions 워크플로 보안 린트
+  # ─────────────────────────────────────────────────────────
+  # actionlint: GHA 문법·permissions·shellcheck·expression injection 검사
+  # gha_permissions 축의 실제 도구 연결 (code-quality.md 표 나태화 해소)
+  workflow-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: reviewdog/action-actionlint@be0761e4c1bab7cfdfca56cd03d4bb6253e39a4a  # v1.72.0
+        with:
+          reporter: github-check
+          fail_level: error
+
+  # ─────────────────────────────────────────────────────────
+  # 7. Dead code 검사 (knip)
+  # ─────────────────────────────────────────────────────────
+  # 미사용 export/import/의존성/파일 탐지. refactor-cleaner 에이전트 수동 호출 대체.
+  # 프로젝트 루트에 knip.json 또는 knip.config.ts 있을 때만 활성화.
+  dead-code:
+    needs: detect
+    if: needs.detect.outputs.has-node == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --prefer-offline --no-audit
+      # knip 설정 없으면 스킵 (워크플로 실패 방지)
+      - name: knip
+        run: |
+          if [ -f knip.json ] || [ -f knip.jsonc ] || [ -f knip.config.ts ] || [ -f knip.config.js ]; then
+            npx -y knip@6.4.1 --no-exit-code --reporter compact
+            # 차단 전환은 baseline 측정 후: npx knip@6.4.1
+          else
+            echo "ℹ️ knip 설정 없음 — dead-code job 스킵. knip.json 추가 후 활성화"
+          fi
+
+  # ─────────────────────────────────────────────────────────
+  # 8. 중복 코드 검사
   # ─────────────────────────────────────────────────────────
   duplicate-check:
     runs-on: ubuntu-latest
