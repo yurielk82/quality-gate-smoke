@@ -32,13 +32,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # 전체 히스토리 스캔
-      # TruffleHog v3.94.3 — verified secrets + 검증 실패분만 리포트
+      # TruffleHog v3.94.3 — verified secrets만 리포트 (strictest, lowest FP)
       # gitleaks 대비 장점: 조직 라이선스 불필요, FP 낮음(실제 유효 시크릿 검증)
       # action.yml 내부가 자동으로 --fail 추가 (source 확인: trufflesecurity/trufflehog@v3.94.3)
+      # unknown 제거: 네트워크 검증 실패 결과까지 포함하면 vendor/node_modules에서 대량 FP
       - name: TruffleHog OSS
         uses: trufflesecurity/trufflehog@47e7b7cd74f578e1e3145d48f669f22fd1330ca6  # v3.94.3
         with:
-          extra_args: --results=verified,unknown
+          extra_args: --results=verified --exclude-paths=.trufflehog-ignore
 
   # ─────────────────────────────────────────────────────────
   # 2. 감지 — 언어별 lint job 활성화 결정

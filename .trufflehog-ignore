@@ -1,0 +1,24 @@
+# TruffleHog 스캔 제외 경로 (정규식)
+# .trufflehog-ignore로 프로젝트 루트에 배치
+#
+# 참고: https://github.com/trufflesecurity/trufflehog/blob/main/PULL_REQUEST_TEMPLATE.md
+
+node_modules/
+dist/
+build/
+.next/
+.venv/
+venv/
+__pycache__/
+\.pyc$
+vendor/
+coverage/
+\.lock$
+\.lockb$
+package-lock\.json$
+yarn\.lock$
+pnpm-lock\.yaml$
+poetry\.lock$
+uv\.lock$
+Cargo\.lock$
+go\.sum$
